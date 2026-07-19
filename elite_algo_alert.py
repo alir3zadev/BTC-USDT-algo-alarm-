@@ -26,7 +26,9 @@ import ccxt
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 CHAT_ID = os.environ.get("TG_CHAT_ID")
 
-EXCHANGE_ID = "binance"
+EXCHANGE_ID = "kucoin"   # binance blocks US-based cloud IPs (incl. GitHub
+                         # Actions runners) with a "restricted location"
+                         # error; kucoin/okx/bybit do not have this issue
 SYMBOL = os.environ.get("SYMBOL", "BTC/USDT")
 TIMEFRAME = "4h"              # tuned per your request: fewer, stronger signals
 
