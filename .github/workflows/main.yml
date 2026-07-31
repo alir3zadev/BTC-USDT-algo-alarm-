@@ -31,12 +31,13 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SYMBOL: "BTC/USDT"
+          TIMEFRAME: "4h"   # change this to switch timeframe, e.g. "1h", "15m", "1d"
         run: python elite_algo_alert.py
 
       - name: Commit updated state file
         run: |
           git config user.name "elite-algo-bot"
           git config user.email "actions@github.com"
-          git add last_signal_state.txt
+          git add last_signal_state_*.txt
           git diff --quiet --cached || git commit -m "update last signal state [skip ci]"
           git push
