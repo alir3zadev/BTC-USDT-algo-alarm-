@@ -30,7 +30,9 @@ EXCHANGE_ID = "kucoin"   # binance blocks US-based cloud IPs (incl. GitHub
                          # Actions runners) with a "restricted location"
                          # error; kucoin/okx/bybit do not have this issue
 SYMBOL = os.environ.get("SYMBOL", "BTC/USDT")
-TIMEFRAME = "4h"              # tuned per your request: fewer, stronger signals
+TIMEFRAME = os.environ.get("TIMEFRAME", "4h")   # e.g. "15m","1h","4h","1d"
+                                                 # set via GitHub Actions env,
+                                                 # no need to edit this file
 
 # --- Supertrend settings ---
 ATR_LEN = 10
@@ -43,7 +45,8 @@ USE_SMART_FILTER = True        # close vs EMA200 alignment -> stronger signal
 USE_ADX_FILTER = True          # ADX(14) > 20 -> only trending conditions
 USE_VOLUME_FILTER = False      # rising volume (EMA25 > EMA26 of volume)
 
-STATE_FILE = os.path.join(os.path.dirname(__file__), "last_signal_state.txt")
+_state_suffix = f"{SYMBOL.replace('/', '-')}_{TIMEFRAME}"
+STATE_FILE = os.path.join(os.path.dirname(__file__), f"last_signal_state_{_state_suffix}.txt")
 
 # ================================================================
 
