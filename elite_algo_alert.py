@@ -51,16 +51,18 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), f"last_signal_state_{_state
 # ================================================================
 
 
-def send_telegram(text: str):
+def send_telegram(text: str) -> bool:
     if not BOT_TOKEN or not CHAT_ID:
         print("[telegram error] TG_BOT_TOKEN / TG_CHAT_ID not set")
-        return
+        return False
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
         r = requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=15)
         r.raise_for_status()
+        return True
     except Exception as e:
         print(f"[telegram error] {e}")
+        return False
 
 
 def fetch_ohlcv(exchange, symbol, timeframe, limit=500):
@@ -171,43 +173,89 @@ def save_last_seen(ts_str):
         f.write(ts_str)
 
 
+def format_times(ts):
+    """Return the candle time converted to Asia/Tehran local time only."""
+    tehran_str = (ts + pd.Timedelta(hours=3, minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    return f"{tehran_str} (Tehran time)"
+
+
+def build_message(signal_type, row, ts):
+    return (f"{signal_type} signal (strong: EMA200 + ADX filters passed)\n"
+            f"{SYMBOL} [{TIMEFRAME}]\n"
+            f"Close: {row['close']:.4f}\n"
+            f"ADX: {row['adx']:.1f}\n"
+            f"Candle time: {format_times(ts)}")
+
+
 def main():
+    if os.environ.get("FORCE_TEST_MESSAGE", "").lower() == "true":
+        ok = send_telegram(
+            f"Test message from GitHub Actions.\n"
+            f"{SYMBOL} [{TIMEFRAME}] - if you see this, TG_BOT_TOKEN and "
+            f"TG_CHAT_ID are correctly configured in this repo's Secrets."
+        )
+        print("Test message sent successfully." if ok else
+              "Test message FAILED to send - check the [telegram error] above.")
+        sys.exit(0 if ok else 1)
+
     exchange = getattr(ccxt, EXCHANGE_ID)()
     df = fetch_ohlcv(exchange, SYMBOL, TIMEFRAME)
     df = compute_signals(df)
 
-    # Only the last FULLY CLOSED 4h candle - never the live/forming one
-    closed = df.iloc[:-1]
-    last_row = closed.iloc[-1]
-    ts_str = str(last_row["time"])
+    # All FULLY CLOSED candles - never the live/forming one
+    closed = df.iloc[:-1].reset_index(drop=True)
 
     last_seen = load_last_seen()
-    if ts_str == last_seen:
-        print(f"No new closed candle since last run ({ts_str}). Nothing to do.")
+    if last_seen:
+        last_seen_ts = pd.to_datetime(last_seen)
+        # Every closed candle strictly newer than the last one we processed
+        new_rows = closed[closed["time"] > last_seen_ts]
+    else:
+        # First ever run: don't replay history, just start from the latest candle
+        new_rows = closed.iloc[[-1]]
+
+    if len(new_rows) == 0:
+        print(f"No new closed candle since last run "
+              f"({format_times(last_seen_ts)}). Nothing to do.")
         return
 
-    if last_row["bull"]:
-        msg = (f"BUY signal (strong: EMA200 + ADX filters passed)\n"
-               f"{SYMBOL} [{TIMEFRAME}]\n"
-               f"Close: {last_row['close']:.4f}\n"
-               f"ADX: {last_row['adx']:.1f}\n"
-               f"Candle time (UTC): {ts_str}")
-        print(msg)
-        send_telegram(msg)
-    elif last_row["bear"]:
-        msg = (f"SELL signal (strong: EMA200 + ADX filters passed)\n"
-               f"{SYMBOL} [{TIMEFRAME}]\n"
-               f"Close: {last_row['close']:.4f}\n"
-               f"ADX: {last_row['adx']:.1f}\n"
-               f"Candle time (UTC): {ts_str}")
-        print(msg)
-        send_telegram(msg)
-    else:
-        print(f"Closed candle {ts_str} checked, no signal.")
+    if len(new_rows) > 1:
+        print(f"[catch-up] {len(new_rows)} new closed candles found since last "
+              f"run - checking all of them so no signal is skipped.")
 
-    # Always advance the state to the latest closed candle, even with no
-    # signal, so we never re-scan the same candle twice.
-    save_last_seen(ts_str)
+    for _, row in new_rows.iterrows():
+        ts = row["time"]
+        ts_str = str(ts)
+
+        if row["bull"]:
+            msg = build_message("BUY", row, ts)
+            print(msg)
+            ok = send_telegram(msg)
+            if not ok:
+                print(f"[warning] Telegram send failed for candle {format_times(ts)}. "
+                      f"State NOT advanced past this candle - it will be retried "
+                      f"next run instead of being skipped or resent for candles "
+                      f"already sent successfully.")
+                sys.exit(1)
+        elif row["bear"]:
+            msg = build_message("SELL", row, ts)
+            print(msg)
+            ok = send_telegram(msg)
+            if not ok:
+                print(f"[warning] Telegram send failed for candle {format_times(ts)}. "
+                      f"State NOT advanced past this candle - it will be retried "
+                      f"next run instead of being skipped or resent for candles "
+                      f"already sent successfully.")
+                sys.exit(1)
+        else:
+            print(f"Closed candle {format_times(ts)} checked, no signal.")
+
+        # Save progress immediately after each candle (sent or signal-free).
+        # This is what actually prevents duplicate notifications: once a
+        # candle's alert is confirmed sent, it is marked done right away,
+        # so even if a LATER candle in this same catch-up batch fails, the
+        # earlier successful ones are never re-sent on the next run.
+        save_last_seen(ts_str)
 
 
 if __name__ == "__main__":
