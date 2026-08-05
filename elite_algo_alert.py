@@ -142,6 +142,12 @@ def compute_signals(df):
     cross_up = (df["close"] > df["st"]) & (df["close"].shift(1) <= df["st"].shift(1))
     cross_down = (df["close"] < df["st"]) & (df["close"].shift(1) >= df["st"].shift(1))
 
+    # Keep the RAW crossover (matches the indicator's "Normal" strategy with
+    # no extra filters) so we can tell apart "no crossover happened at all"
+    # from "crossover happened but a filter blocked it".
+    df["raw_bull"] = cross_up
+    df["raw_bear"] = cross_down
+
     bull = cross_up.copy()
     bear = cross_down.copy()
 
@@ -248,7 +254,14 @@ def main():
                       f"already sent successfully.")
                 sys.exit(1)
         else:
-            print(f"Closed candle {format_times(ts)} checked, no signal.")
+            note = ""
+            if row["raw_bull"] or row["raw_bear"]:
+                blocked_type = "BUY" if row["raw_bull"] else "SELL"
+                note = (f" [NOTE: a raw {blocked_type} crossover DID happen here, "
+                        f"but was blocked by the EMA200/ADX filter - close="
+                        f"{row['close']:.4f}, supertrend={row['st']:.4f}, "
+                        f"adx={row['adx']:.1f}]")
+            print(f"Closed candle {format_times(ts)} checked, no signal.{note}")
 
         # Save progress immediately after each candle (sent or signal-free).
         # This is what actually prevents duplicate notifications: once a
